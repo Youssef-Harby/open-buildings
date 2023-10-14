@@ -5,7 +5,7 @@ import time
 import json
 from pathlib import Path
 from get_scoop import FileFinder
-from geoparquet_metadata_duckdb import ParquetProcessor
+from open_buildings.stac.geoparquet_processor import ParquetProcessor
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
