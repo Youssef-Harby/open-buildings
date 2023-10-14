@@ -1,7 +1,8 @@
 import duckdb
-from typing import List, Dict
+from typing import List, Dict, List
 import logging
 import time
+import re
 
 
 class ParquetProcessor:
@@ -17,12 +18,18 @@ class ParquetProcessor:
         try:
             self.con.load_extension("spatial")
             self.con.load_extension("httpfs")
-        except duckdb.DuckDBError:
-            logging.info("Spatial and httpfs extensions not found. Installing now.")
+        except duckdb.Error:
+            logging.warning("Spatial and httpfs extensions not found. Installing now.")
             self.con.install_extension("spatial")
             self.con.load_extension("spatial")
             self.con.install_extension("httpfs")
             self.con.load_extension("httpfs")
+
+        try:
+            self.con.execute("SET enable_progress_bar_print=true")
+            self.con.execute("SET enable_progress_bar=true")
+        except duckdb.Error:
+            logging.error("Unable to set progress bar settings.")
 
     def get_column_info(self, file_path: str) -> Dict[str, str]:
         logging.info(f"Getting column info for {file_path}")
@@ -30,7 +37,7 @@ class ParquetProcessor:
         query = f"DESCRIBE SELECT * FROM read_parquet('{file_path}')"
         try:
             column_info_rows = self.con.execute(query).fetchall()
-        except duckdb.DuckDBError as e:
+        except duckdb.Error as e:
             logging.error(f"Database error: {e}")
             return {}
         column_info = {row[0]: row[1] for row in column_info_rows}
@@ -40,23 +47,24 @@ class ParquetProcessor:
         )
         return column_info
 
-    def get_bbox(self, file_path: str) -> List[float]:
+    def get_bbox(self, file_path: str) -> List[List[List[float]]]:
         logging.info(f"Getting bounding box for {file_path}")
         start_time = time.time()
         query = f"SELECT ST_AsText(ST_Envelope_Agg(ST_GeomFromWKB(geometry))) as bbox FROM read_parquet('{file_path}')"
         try:
             metadata_row = self.con.execute(query).fetchone()
-        except duckdb.DuckDBError as e:
+        except duckdb.Error as e:
             logging.error(f"Database error: {e}")
             return []
         bbox_str = str(metadata_row[0])  # Convert bytes to string
-        coords = bbox_str.replace("POLYGON ((", "").replace("))", "").split(", ")
-        bbox_list = [float(coord) for pair in coords for coord in pair.split()]
+        coords_str = re.findall(r"(-?\d+\.\d+ -?\d+\.\d+)", bbox_str)
+        coords_pairs = [[float(coord) for coord in pair.split()] for pair in coords_str]
+        bbox_list = [coords_pairs]
         end_time = time.time()
         logging.info(
             f"Completed getting bounding box in {end_time - start_time} seconds."
         )
-        return bbox_list
+        return [bbox_list]
 
     def get_geometry_type(self, file_path: str) -> str:
         logging.info(f"Getting geometry type for {file_path}")
@@ -64,7 +72,7 @@ class ParquetProcessor:
         query = f"SELECT ST_GeometryType(ST_GeomFromWKB(geometry)) FROM read_parquet('{file_path}')"
         try:
             geometry_type = self.con.execute(query).fetchone()[0]
-        except duckdb.DuckDBError as e:
+        except duckdb.Error as e:
             logging.error(f"Database error: {e}")
             return ""
         camel_case_type = "".join(
